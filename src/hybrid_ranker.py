@@ -1,18 +1,138 @@
 """
 hybrid_ranker.py
 
-Combines structured scores and unstructured embeddings to generate a final candidate ranking.
+Combines structured scores and embedding-based semantic scores to rank candidates.
 """
 
-def rank_candidates(structured_scores, embeddings):
-    """
-    Computes final ranks by combining structured and unstructured signals.
-    
-    Args:
-        structured_scores (pd.DataFrame): Candidate structured scores.
-        embeddings (np.ndarray): Candidate text embeddings.
+import pandas as pd
+from src.data_loader import load_single_candidate
+from src.preprocessing import build_candidate_profile
+from src.structured_scoring import StructuredScorer
+from src.embeddings import EmbeddingScorer
+
+class HybridRanker:
+    def __init__(self,
+                 structured_weight: float = 0.60,
+                 semantic_weight: float = 0.40,
+                 structured_score_weights: dict = None):
+        """
+        Initializes the HybridRanker with scorer components and overall weights.
         
-    Returns:
-        pd.DataFrame: Final ranked list of candidates.
-    """
-    pass
+        Args:
+            structured_weight (float): Weight for structured scores (0.0-1.0).
+            semantic_weight (float): Weight for semantic match scores (0.0-1.0).
+            structured_score_weights (dict, optional): Weights within StructuredScorer. Defaults to None.
+        """
+        if abs(structured_weight + semantic_weight - 1.0) > 1e-6:
+            raise ValueError("structured_weight and semantic_weight must sum to 1.0")
+            
+        self.structured_weight = structured_weight
+        self.semantic_weight = semantic_weight
+        self.structured_score_weights = structured_score_weights
+        
+        self.structured_scorer = StructuredScorer()
+        self.embedding_scorer = EmbeddingScorer()
+
+    def rank(self,
+             candidates: list[dict],
+             jd_text: str,
+             top_n: int = None) -> pd.DataFrame:
+        """
+        Ranks candidates based on a weighted combination of structured and semantic scores.
+        
+        Args:
+            candidates (list[dict]): Raw candidate list from data_loader.
+            jd_text (str): Job description text.
+            top_n (int, optional): Number of top results to return. Defaults to None.
+            
+        Returns:
+            pd.DataFrame: DataFrame containing candidates, scores, and ranks.
+        """
+        if not candidates:
+            cols = [
+                'candidate_id', 'final_score',
+                'skill_match_score', 'experience_score', 'education_score',
+                'trajectory_score', 'platform_signal_score',
+                'structured_total', 'semantic_score',
+                'current_title', 'years_of_experience', 'location'
+            ]
+            df = pd.DataFrame(columns=cols)
+            df['rank'] = []
+            return df
+            
+        # 1. Load single candidates and build profiles
+        loaded_candidates = [load_single_candidate(c) for c in candidates]
+        profiles = [build_candidate_profile(c) for c in loaded_candidates]
+        
+        # 2 & 3. Embed JD and candidates
+        jd_emb = self.embedding_scorer.embed_jd(jd_text)
+        cand_embs = self.embedding_scorer.embed_candidates(profiles)
+        
+        # 4. Get semantic scores
+        semantic_scores = self.embedding_scorer.score(jd_emb, cand_embs)
+        
+        # 5 & 6. Calculate structured scores and combine with semantic scores
+        rows = []
+        for raw, prof in zip(loaded_candidates, profiles):
+            cid = prof['candidate_id']
+            sem_score = semantic_scores.get(cid, 0.0)
+            
+            # Combine raw candidate fields and processed profile fields for StructuredScorer
+            combined = {**raw, **prof}
+            
+            struct_res = self.structured_scorer.score(combined, jd_text, weights=self.structured_score_weights)
+            struct_total = struct_res['total_score']
+            
+            final_score = self.structured_weight * struct_total + self.semantic_weight * sem_score
+            
+            rows.append({
+                'candidate_id': cid,
+                'final_score': final_score,
+                'skill_match_score': struct_res['skill_match_score'],
+                'experience_score': struct_res['experience_score'],
+                'education_score': struct_res['education_score'],
+                'trajectory_score': struct_res['trajectory_score'],
+                'platform_signal_score': struct_res['platform_signal_score'],
+                'structured_total': struct_total,
+                'semantic_score': sem_score,
+                'current_title': prof['current_title'],
+                'years_of_experience': prof['years_of_experience'],
+                'location': prof['location']
+            })
+            
+        df = pd.DataFrame(rows)
+        
+        # 8 & 9. Sort descending and add rank
+        df = df.sort_values(by='final_score', ascending=False).reset_index(drop=True)
+        df['rank'] = df.index + 1
+        
+        # Reorder columns to put 'rank' first
+        cols_order = [
+            'rank', 'candidate_id', 'final_score',
+            'skill_match_score', 'experience_score', 'education_score',
+            'trajectory_score', 'platform_signal_score',
+            'structured_total', 'semantic_score',
+            'current_title', 'years_of_experience', 'location'
+        ]
+        df = df[cols_order]
+        
+        # 10. Limit to top_n
+        if top_n is not None:
+            df = df.head(top_n)
+            
+        return df
+
+if __name__ == '__main__':
+    from src.data_loader import load_candidates, load_job_description
+
+    candidates = load_candidates('data/raw/sample_candidates.json')
+    jd_text = load_job_description('data/raw/job_description.docx')
+
+    ranker = HybridRanker()
+    results = ranker.rank(candidates, jd_text, top_n=15)
+
+    pd.set_option('display.max_columns', None)
+    pd.set_option('display.width', 200)
+    print(results[['rank','candidate_id','final_score',
+                    'skill_match_score','experience_score',
+                    'platform_signal_score','current_title']].to_string())

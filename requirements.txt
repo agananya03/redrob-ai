@@ -5,3 +5,5 @@ sentence-transformers
 streamlit
 python-dotenv
 pytest
+python-docx
+tqdm
