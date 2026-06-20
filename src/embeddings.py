@@ -169,23 +169,3 @@ class EmbeddingScorer:
                 pickle.dump(self._cache, f)
         except Exception as e:
             logger.error(f"Failed to save embedding cache: {e}")
-
-if __name__ == '__main__':
-    from src.data_loader import load_candidates, load_job_description
-    from src.preprocessing import build_candidate_profile
-
-    candidates = load_candidates('data/raw/sample_candidates.json')
-    profiles = [build_candidate_profile(c) for c in candidates]
-    jd_text = load_job_description('data/raw/job_description.docx')
-
-    scorer = EmbeddingScorer()
-    jd_emb = scorer.embed_jd(jd_text)
-    cand_embs = scorer.embed_candidates(profiles)
-    scores = scorer.score(jd_emb, cand_embs)
-
-    top5 = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:5]
-    print('Top 5 by semantic score:')
-    for cid, s in top5:
-        title = next((p['current_title'] for p in profiles
-                      if p['candidate_id'] == cid), '?')
-        print(f'  {cid}  {s:.4f}  {title}')

@@ -4,7 +4,12 @@ hybrid_ranker.py
 Combines structured scores and embedding-based semantic scores to rank candidates.
 """
 
+import os
+import time
+import logging
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 from src.data_loader import load_single_candidate
 from src.preprocessing import build_candidate_profile
 from src.structured_scoring import StructuredScorer
@@ -41,24 +46,18 @@ class HybridRanker:
         Ranks candidates based on a weighted combination of structured and semantic scores.
         
         Args:
-            candidates (list[dict]): Raw candidate list from data_loader.
+            candidates (list[dict]): Raw candidate list.
             jd_text (str): Job description text.
-            top_n (int, optional): Number of top results to return. Defaults to None.
+            top_n (int, optional): Number of top results to return.
             
         Returns:
             pd.DataFrame: DataFrame containing candidates, scores, and ranks.
+            
+        Raises:
+            ValueError: If the candidates list is empty.
         """
         if not candidates:
-            cols = [
-                'candidate_id', 'final_score',
-                'skill_match_score', 'experience_score', 'education_score',
-                'trajectory_score', 'platform_signal_score',
-                'structured_total', 'semantic_score',
-                'current_title', 'years_of_experience', 'location'
-            ]
-            df = pd.DataFrame(columns=cols)
-            df['rank'] = []
-            return df
+            raise ValueError("Candidates list is empty.")
             
         # 1. Load single candidates and build profiles
         loaded_candidates = [load_single_candidate(c) for c in candidates]
@@ -97,7 +96,8 @@ class HybridRanker:
                 'semantic_score': sem_score,
                 'current_title': prof['current_title'],
                 'years_of_experience': prof['years_of_experience'],
-                'location': prof['location']
+                'location': prof['location'],
+                'profile_summary': prof.get('profile_summary', '')
             })
             
         df = pd.DataFrame(rows)
@@ -112,7 +112,7 @@ class HybridRanker:
             'skill_match_score', 'experience_score', 'education_score',
             'trajectory_score', 'platform_signal_score',
             'structured_total', 'semantic_score',
-            'current_title', 'years_of_experience', 'location'
+            'current_title', 'years_of_experience', 'location', 'profile_summary'
         ]
         df = df[cols_order]
         
@@ -122,17 +122,83 @@ class HybridRanker:
             
         return df
 
-if __name__ == '__main__':
-    from src.data_loader import load_candidates, load_job_description
+    def llm_rerank(self,
+                   top_candidates: pd.DataFrame,
+                   jd_text: str,
+                   n: int = 15,
+                   skip_llm: bool = False) -> pd.DataFrame:
+        """
+        Appends LLM-generated reasoning for candidate ranking.
+        
+        Args:
+            top_candidates (pd.DataFrame): DataFrame of ranked candidates.
+            jd_text (str): Job description text.
+            n (int, optional): Number of candidates to rerank.
+            skip_llm (bool, optional): If True, skips LLM calls and fills with empty strings.
+            
+        Returns:
+            pd.DataFrame: DataFrame with the added 'reasoning' column.
+        """
+        df = top_candidates.copy()
+        if skip_llm:
+            df['reasoning'] = ''
+            return df
+            
+        api_key = os.getenv('GROQ_API_KEY')
+        if not api_key:
+            logger.warning("GROQ_API_KEY not set. Skipping LLM rerank.")
+            df['reasoning'] = 'N/A'
+            return df
+            
+        try:
+            from groq import Groq
+            client = Groq(api_key=api_key)
+        except ImportError:
+            logger.warning("groq SDK not installed. Skipping LLM rerank.")
+            df['reasoning'] = 'N/A'
+            return df
 
-    candidates = load_candidates('data/raw/sample_candidates.json')
-    jd_text = load_job_description('data/raw/job_description.docx')
+        system_prompt = (
+            "You are an expert technical recruiter evaluating candidates for "
+            "a Senior AI Engineer role. Be specific — reference actual skills, "
+            "years, company names, and titles from the candidate's profile. "
+            "Never give generic praise."
+        )
 
-    ranker = HybridRanker()
-    results = ranker.rank(candidates, jd_text, top_n=15)
+        reasonings = []
+        total = len(df)
+        for idx, row in df.iterrows():
+            logger.info(f"Generating reasoning for candidate {len(reasonings)+1}/{total}...")
+            
+            candidate_id = row.get('candidate_id', 'Unknown')
+            current_title = row.get('current_title', 'Unknown')
+            years_of_experience = row.get('years_of_experience', 0)
+            skill_match_score = row.get('skill_match_score', 0.0)
+            experience_score = row.get('experience_score', 0.0)
+            trajectory_score = row.get('trajectory_score', 0.0)
+            platform_signal_score = row.get('platform_signal_score', 0.0)
+            profile_summary = str(row.get('profile_summary', ''))
+            
+            user_prompt = f"Job Description:\n{jd_text[:2000]}\n\nCandidate profile:\n- ID: {candidate_id}\n- Title: {current_title}\n- Experience: {years_of_experience} years\n- Score breakdown: skill={skill_match_score:.2f}, exp={experience_score:.2f}, trajectory={trajectory_score:.2f}, platform={platform_signal_score:.2f}\n- Profile summary (first 800 chars): {profile_summary[:800]}\n\nWrite ONE sentence (max 25 words) explaining why this candidate ranks where they do. Start with their strongest relevant signal."
 
-    pd.set_option('display.max_columns', None)
-    pd.set_option('display.width', 200)
-    print(results[['rank','candidate_id','final_score',
-                    'skill_match_score','experience_score',
-                    'platform_signal_score','current_title']].to_string())
+            try:
+                response = client.chat.completions.create(
+                    model='llama-3.3-70b-versatile',
+                    messages=[
+                        {'role': 'system', 'content': system_prompt},
+                        {'role': 'user', 'content': user_prompt}
+                    ],
+                    max_tokens=80,
+                    temperature=0.3,
+                )
+                reasoning = response.choices[0].message.content
+                reasoning = reasoning.strip()[:200]
+            except Exception as e:
+                logger.error(f"API error for {candidate_id}: {e}")
+                reasoning = "API error"
+                
+            reasonings.append(reasoning)
+            time.sleep(0.5)
+            
+        df['reasoning'] = reasonings
+        return df

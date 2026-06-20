@@ -4,7 +4,10 @@ preprocessing.py
 Handles candidate profile building and platform signal extraction.
 """
 
+import logging
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 def build_candidate_profile(candidate: dict) -> dict:
     """
@@ -34,18 +37,11 @@ def build_candidate_profile(candidate: dict) -> dict:
          career_text
          skills_text
 
-    Return dict with:
-      {
-        'candidate_id':        str,
-        'profile_summary':     str,  <- text blob for embedding
-        'years_of_experience': float | None,
-        'location':            str | None,
-        'country':             str | None,
-        'current_title':       str | None,
-        'current_industry':    str | None,
-        'skill_names':         list[str],  <- used by structured scorer
-      }
-    Never raise. Missing fields -> None or empty string.
+    Args:
+        candidate (dict): The raw candidate dictionary.
+        
+    Returns:
+        dict: A dictionary containing extracted profile details.
     """
     try:
         if not isinstance(candidate, dict):
@@ -164,7 +160,8 @@ def build_candidate_profile(candidate: dict) -> dict:
             'current_industry': current_industry,
             'skill_names': skill_names,
         }
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error building profile for candidate {candidate.get('candidate_id', 'UNKNOWN') if isinstance(candidate, dict) else 'UNKNOWN'}: {e}")
         return {
             'candidate_id': 'UNKNOWN',
             'profile_summary': '',
@@ -196,8 +193,11 @@ def extract_platform_signals(candidate: dict) -> dict:
       interview_completion_rate, offer_acceptance_rate,
       verified_email, verified_phone, linkedin_connected
 
-    If redrob_signals is missing or empty, return a dict where every
-    key is present but set to None. Never raise.
+    Args:
+        candidate (dict): The raw candidate dictionary.
+        
+    Returns:
+        dict: A dictionary containing extracted platform signals.
     """
     fields = [
         'profile_completeness_score', 'signup_date', 'last_active_date',
@@ -248,5 +248,6 @@ def extract_platform_signals(candidate: dict) -> dict:
                 result[field] = clean_sentinels(signals[field])
                 
         return result
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error extracting platform signals for candidate {candidate.get('candidate_id', 'UNKNOWN') if isinstance(candidate, dict) else 'UNKNOWN'}: {e}")
         return {f: None for f in fields}

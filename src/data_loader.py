@@ -4,6 +4,7 @@ data_loader.py
 Responsible for loading the raw dataset and job description.
 """
 
+import os
 import json
 import logging
 import docx
@@ -12,15 +13,24 @@ logger = logging.getLogger(__name__)
 
 def load_candidates(path: str) -> list[dict]:
     """
-    Reads candidate data from either:
-      .jsonl file — one JSON object per line (full 100k dataset)
-      .json file  — JSON array (sample_candidates.json)
-    Detects format from file extension.
-    Keeps ALL nested fields intact — do NOT flatten.
-    Skips and logs (do not crash) any line that fails to parse.
-    Returns list of raw candidate dicts.
+    Reads candidate data from either a .jsonl or .json file.
+    
+    Args:
+        path (str): The file path to load candidates from.
+        
+    Returns:
+        list[dict]: A list of raw candidate dictionaries.
+        
+    Raises:
+        FileNotFoundError: If the specified file path does not exist.
     """
     path_lower = path.lower()
+    if not os.path.exists(path):
+        if path_lower.endswith('.jsonl'):
+            raise FileNotFoundError(f"candidates.jsonl not found at {path}")
+        else:
+            raise FileNotFoundError(f"File not found at {path}")
+            
     records = []
     
     if path_lower.endswith('.jsonl'):
@@ -54,13 +64,13 @@ def load_candidates(path: str) -> list[dict]:
 
 def load_single_candidate(record: dict) -> dict:
     """
-    Validates that a raw dict has the required top-level keys.
-    If any key is missing, fill with safe defaults:
-      - missing list fields (career_history, education, skills,
-        certifications, languages) -> []
-      - missing dict fields (profile, redrob_signals) -> {}
-      - missing candidate_id -> 'UNKNOWN'
-    Never raises. Always returns something usable.
+    Validates a raw candidate dict and fills missing keys with safe defaults.
+    
+    Args:
+        record (dict): A raw candidate dictionary.
+        
+    Returns:
+        dict: A validated candidate dictionary with default values for missing keys.
     """
     if not isinstance(record, dict):
         record = {}
@@ -89,9 +99,13 @@ def load_single_candidate(record: dict) -> dict:
 
 def load_job_description(path: str) -> str:
     """
-    Reads job_description.docx using python-docx.
-    Joins all non-empty paragraph texts with newline.
-    Returns full JD as a single string.
+    Reads a job description document (.docx) and returns its text.
+    
+    Args:
+        path (str): The file path to the job description document.
+        
+    Returns:
+        str: The full job description text as a single string.
     """
     try:
         doc = docx.Document(path)
