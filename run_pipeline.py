@@ -4,9 +4,12 @@ from src.data_loader import load_job_description, load_candidates
 from src.hybrid_ranker import HybridRanker
 from src.output_writer import write_submission
 import os
+import logging
 from dotenv import load_dotenv
 
-def run_on_sample():
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+
+def run_on_sample(use_ltr=None):
     """
     Convenience function that runs the full pipeline on sample_candidates.json
     with skip_llm=True.
@@ -22,7 +25,7 @@ def run_on_sample():
     print(f"Loaded {len(candidates)} candidates. Running hybrid scoring...")
     
     ranker = HybridRanker()
-    ranked = ranker.rank(candidates, jd_text, top_n=100)
+    ranked = ranker.rank(candidates, jd_text, top_n=100, use_ltr=use_ltr)
     
     # skip_llm=True
     ranked = ranker.llm_rerank(ranked, jd_text, skip_llm=True)
@@ -55,7 +58,7 @@ def run():
     args = parser.parse_args()
 
     if args.sample:
-        run_on_sample()
+        run_on_sample(use_ltr=args.use_ltr)
         return
 
     start_time = time.time()

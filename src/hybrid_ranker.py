@@ -14,6 +14,7 @@ from src.data_loader import load_single_candidate
 from src.preprocessing import build_candidate_profile
 from src.structured_scoring import StructuredScorer
 from src.embeddings import EmbeddingScorer
+from src.ltr_ranker import load_training_data, train_ranker, predict_scores, save_model, load_model
 
 class HybridRanker:
     def __init__(self,
@@ -41,7 +42,8 @@ class HybridRanker:
     def rank(self,
              candidates: list[dict],
              jd_text: str,
-             top_n: int = None) -> pd.DataFrame:
+             top_n: int = None,
+             use_ltr: bool = True) -> pd.DataFrame:
         """
         Ranks candidates based on a weighted combination of structured and semantic scores.
         
@@ -102,13 +104,33 @@ class HybridRanker:
             
         df = pd.DataFrame(rows)
         
+        labels_path = 'data/processed/relevance_labels.csv'
+        model_path = 'data/processed/ltr_model.pkl'
+        
+        if use_ltr:
+            if os.path.exists(labels_path):
+                try:
+                    model = load_model(model_path)
+                except FileNotFoundError:
+                    X, y, feature_names = load_training_data(labels_path, df)
+                    model = train_ranker(X, y, feature_names)
+                    save_model(model, model_path)
+                
+                ltr_scores = predict_scores(model, df)
+                df['final_score'] = df['candidate_id'].map(ltr_scores)
+                logger.info('Using LightGBM LTR for final ranking')
+            else:
+                logger.warning('relevance_labels.csv not found, falling back to weighted sum. Run label_candidates.py first.')
+                
+        df['calibrated_score'] = df['final_score'].rank(pct=True).round(4)
+        
         # 8 & 9. Sort descending and add rank
         df = df.sort_values(by='final_score', ascending=False).reset_index(drop=True)
         df['rank'] = df.index + 1
         
         # Reorder columns to put 'rank' first
         cols_order = [
-            'rank', 'candidate_id', 'final_score',
+            'rank', 'candidate_id', 'final_score', 'calibrated_score',
             'skill_match_score', 'experience_score', 'education_score',
             'trajectory_score', 'platform_signal_score',
             'structured_total', 'semantic_score',

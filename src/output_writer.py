@@ -22,8 +22,13 @@ def write_submission(ranked_df: pd.DataFrame,
         
     df = ranked_df.copy()
     
-    # 1. 'score' = final_score column, rounded to 4 decimal places
-    df['score'] = df['final_score'].round(4)
+    # 1. 'score' = calibrated_score column, rounded to 4 decimal places
+    if 'calibrated_score' in df.columns:
+        df['score'] = df['calibrated_score'].round(4)
+    elif 'final_score' in df.columns:
+        df['score'] = df['final_score'].round(4)
+    else:
+        df['score'] = 0.0
     
     # 2. 'rank' = integer, 1-indexed.
     if 'rank' not in df.columns:
