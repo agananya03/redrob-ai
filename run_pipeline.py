@@ -46,6 +46,11 @@ def run():
                         help='Path to the output CSV')
     parser.add_argument('--sample', action='store_true',
                         help='Run on sample_candidates.json with skip_llm=True')
+    parser.add_argument('--use_ltr', dest='use_ltr', action='store_true', default=None,
+                        help='Force the LightGBM LTR ranker (Checkpoint B). Fails over to '
+                             'the weighted sum if relevance_labels.csv is missing/too small.')
+    parser.add_argument('--no_ltr', dest='use_ltr', action='store_false',
+                        help='Force the hand-set weighted sum, even if relevance_labels.csv exists.')
 
     args = parser.parse_args()
 
@@ -61,7 +66,7 @@ def run():
     print(f"Loaded {len(candidates)} candidates. Running hybrid scoring...")
     
     ranker = HybridRanker()
-    ranked = ranker.rank(candidates, jd_text, top_n=args.top_n)
+    ranked = ranker.rank(candidates, jd_text, top_n=args.top_n, use_ltr=args.use_ltr)
     
     if not args.skip_llm:
         ranked = ranker.llm_rerank(ranked, jd_text)
@@ -76,3 +81,4 @@ def run():
 if __name__ == "__main__":
     load_dotenv()
     run()
+    
