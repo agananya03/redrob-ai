@@ -40,7 +40,7 @@ class EmbeddingScorer:
             self._cache = {}
             
         # Initialize sentence-transformers model
-        self.model = SentenceTransformer('all-MiniLM-L6-v2')
+        self.model = SentenceTransformer('BAAI/bge-small-en-v1.5')
 
     def _get_embedding(self, text: str) -> np.ndarray:
         """
@@ -73,7 +73,11 @@ class EmbeddingScorer:
         Returns:
             np.ndarray: Embedding vector.
         """
-        emb = self._get_embedding(jd_text)
+        # BGE models require a specific prefix for queries (but not for documents)
+        query_instruction = "Represent this sentence for searching relevant passages: "
+        processed_jd_text = query_instruction + jd_text
+        
+        emb = self._get_embedding(processed_jd_text)
         self.save_cache()
         return emb
 

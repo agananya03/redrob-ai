@@ -43,7 +43,8 @@ class HybridRanker:
              candidates: list[dict],
              jd_text: str,
              top_n: int = None,
-             use_ltr: bool = True) -> pd.DataFrame:
+             use_ltr: bool = True,
+             ablation_feature: str = None) -> pd.DataFrame:
         """
         Ranks candidates based on a weighted combination of structured and semantic scores.
         
@@ -78,10 +79,32 @@ class HybridRanker:
             cid = prof['candidate_id']
             sem_score = semantic_scores.get(cid, 0.0)
             
+            if ablation_feature == 'semantic_score':
+                sem_score = 0.0
+            
             # Combine raw candidate fields and processed profile fields for StructuredScorer
             combined = {**raw, **prof}
             
             struct_res = self.structured_scorer.score(combined, jd_text, weights=self.structured_score_weights)
+            
+            if ablation_feature in ['platform_signal_score', 'trajectory_score', 'skill_match_score', 'experience_score', 'education_score']:
+                struct_res[ablation_feature] = 0.0
+                
+                # Re-compute structured_total
+                weights_to_use = self.structured_score_weights or {
+                    'skill': 0.30, 'experience': 0.20, 'education': 0.10,
+                    'trajectory': 0.20, 'platform_signal': 0.20
+                }
+                
+                recomputed_total = (
+                    weights_to_use['skill'] * struct_res['skill_match_score'] +
+                    weights_to_use['experience'] * struct_res['experience_score'] +
+                    weights_to_use['education'] * struct_res['education_score'] +
+                    weights_to_use['trajectory'] * struct_res['trajectory_score'] +
+                    weights_to_use['platform_signal'] * struct_res['platform_signal_score']
+                )
+                struct_res['total_score'] = recomputed_total
+                
             struct_total = struct_res['total_score']
             
             final_score = self.structured_weight * struct_total + self.semantic_weight * sem_score
