@@ -21,7 +21,51 @@ DEFAULT_WEIGHTS = {
 
 class StructuredScorer:
     def __init__(self):
-        pass
+        self._jd_cache = {}
+        # Precompile regular expressions for efficiency
+        self.degree_ms_re = re.compile(r'\bms\b|\bm\.s\b', re.IGNORECASE)
+        self.degree_be_re = re.compile(r'\bbe\b|\bbs\b', re.IGNORECASE)
+        self.field_cs_re = re.compile(r'\bcs\b|\bai\b|\bml\b', re.IGNORECASE)
+        self.it_re = re.compile(r'\bit\b', re.IGNORECASE)
+
+    def _get_jd_info(self, jd_text: str):
+        if jd_text in self._jd_cache:
+            return self._jd_cache[jd_text]
+
+        known_tech_terms = [
+            'python', 'sql', 'spark', 'kafka', 'tensorflow', 'pytorch', 'llm', 'rag',
+            'mlops', 'docker', 'kubernetes', 'aws', 'gcp', 'azure', 'fastapi', 'nlp',
+            'java', 'c++', 'go', 'rust', 'javascript', 'typescript', 'react', 'html',
+            'css', 'hadoop', 'airflow', 'nosql', 'mongodb', 'postgresql', 'mysql',
+            'redis', 'pyspark', 'dbt', 'snowflake', 'scala', 'keras', 'scikit-learn',
+            'pandas', 'numpy'
+        ]
+        
+        jd_text_lower = jd_text.lower()
+        jd_skills = set()
+        for term in known_tech_terms:
+            escaped = re.escape(term)
+            if re.search(r'\b' + escaped + r'\b', jd_text_lower):
+                jd_skills.add(term)
+            elif term in ['c++', 'c#'] and term in jd_text_lower:
+                jd_skills.add(term)
+
+        # Parse experience requirement from jd_text
+        match_range = re.search(r'(\d+)\s*-\s*(\d+)\s*years', jd_text, re.IGNORECASE)
+        match_plus = re.search(r'(\d+)\+\s*years', jd_text, re.IGNORECASE)
+        match_at_least = re.search(r'at least\s+(\d+)\s*years', jd_text, re.IGNORECASE)
+
+        min_required = 5
+        if match_range:
+            min_required = int(match_range.group(1))
+        elif match_plus:
+            min_required = int(match_plus.group(1))
+        elif match_at_least:
+            min_required = int(match_at_least.group(1))
+
+        info = (jd_skills, min_required)
+        self._jd_cache[jd_text] = info
+        return info
 
     def score(self, candidate_dict: dict, jd_text: str, weights: dict = None) -> dict:
         """
@@ -52,28 +96,12 @@ class StructuredScorer:
             if abs(sum(weights.values()) - 1.0) > 1e-6:
                 raise ValueError("Weights must sum to 1.0")
 
+        # Get precomputed jd info
+        jd_skills, min_required = self._get_jd_info(jd_text)
+
         # -------------------------------------------------------------
         # SUB-SCORE 1: skill_match_score (0.0-1.0)
         # -------------------------------------------------------------
-        # Known tech terms to scan case-insensitively in jd_text
-        known_tech_terms = [
-            'python', 'sql', 'spark', 'kafka', 'tensorflow', 'pytorch', 'llm', 'rag',
-            'mlops', 'docker', 'kubernetes', 'aws', 'gcp', 'azure', 'fastapi', 'nlp',
-            'java', 'c++', 'go', 'rust', 'javascript', 'typescript', 'react', 'html',
-            'css', 'hadoop', 'airflow', 'nosql', 'mongodb', 'postgresql', 'mysql',
-            'redis', 'pyspark', 'dbt', 'snowflake', 'scala', 'keras', 'scikit-learn',
-            'pandas', 'numpy'
-        ]
-        
-        jd_text_lower = jd_text.lower()
-        jd_skills = set()
-        for term in known_tech_terms:
-            escaped = re.escape(term)
-            if re.search(r'\b' + escaped + r'\b', jd_text_lower):
-                jd_skills.add(term)
-            elif term in ['c++', 'c#'] and term in jd_text_lower:
-                jd_skills.add(term)
-
         candidate_skills = candidate_dict.get('skills')
         if candidate_skills is None:
             # Fallback if profile format skill_names is present
@@ -132,19 +160,6 @@ class StructuredScorer:
         # -------------------------------------------------------------
         # SUB-SCORE 2: experience_score (0.0-1.0)
         # -------------------------------------------------------------
-        # Parse experience requirement from jd_text
-        match_range = re.search(r'(\d+)\s*-\s*(\d+)\s*years', jd_text, re.IGNORECASE)
-        match_plus = re.search(r'(\d+)\+\s*years', jd_text, re.IGNORECASE)
-        match_at_least = re.search(r'at least\s+(\d+)\s*years', jd_text, re.IGNORECASE)
-
-        min_required = 5
-        if match_range:
-            min_required = int(match_range.group(1))
-        elif match_plus:
-            min_required = int(match_plus.group(1))
-        elif match_at_least:
-            min_required = int(match_at_least.group(1))
-
         # Retrieve years of experience
         years = candidate_dict.get('years_of_experience')
         if years is None:
@@ -180,11 +195,11 @@ class StructuredScorer:
                 return 1.00
             if 'master' in d or 'm.tech' in d or 'mtech' in d or 'mba' in d:
                 return 0.85
-            if re.search(r'\bms\b|\bm\.s\b', d):
+            if self.degree_ms_re.search(d):
                 return 0.85
             if 'bachelor' in d or 'b.tech' in d or 'btech' in d or 'b.e' in d or 'b.s' in d:
                 return 0.70
-            if re.search(r'\bbe\b|\bbs\b', d):
+            if self.degree_be_re.search(d):
                 return 0.70
             if 'diploma' in d or 'associate' in d:
                 return 0.45
@@ -196,7 +211,7 @@ class StructuredScorer:
             f = field_str.lower()
             if 'computer' in f or 'software' in f or 'data science' in f or 'artificial intelligence' in f:
                 return 1.00
-            if re.search(r'\bcs\b|\bai\b|\bml\b', f):
+            if self.field_cs_re.search(f):
                 return 1.00
             if 'math' in f or 'statistic' in f or 'physic' in f:
                 return 0.85
@@ -342,7 +357,7 @@ class StructuredScorer:
                     matched_ind = False
                     for kw in relevant_keywords:
                         if kw == 'it':
-                            if re.search(r'\bit\b', ind_lower):
+                            if self.it_re.search(ind_lower):
                                 matched_ind = True
                                 break
                         else:
