@@ -1,4 +1,6 @@
-import streamlit as st
+﻿import sys
+
+new_app_content = '''import streamlit as st
 import os
 import time
 import pandas as pd
@@ -70,11 +72,11 @@ def inject_custom_css():
     }}
     
     .stApp {{
-        background-color: {bg_primary} !important;
+        background-color: transparent !important;
         font-family: 'DM Sans', sans-serif !important;
     }}
     
-    .stApp, .stApp p, .stApp span, .stApp div, .stApp label, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp table, .stApp th, .stApp td, .stApp tr, .stApp b {{
+    .stApp, .stApp p, .stApp span, .stApp div, .stApp label, .stApp h1, .stApp h2, .stApp h3, .stApp h4 {{
         color: {text_primary} !important;
     }}
     
@@ -138,7 +140,7 @@ def inject_custom_css():
         border-color: {accent} !important;
     }}
     
-    div.stButton > button, div.stDownloadButton > button {{
+    div.stButton > button {{
         background: {accent} !important;
         color: #ffffff !important;
         border: none !important;
@@ -147,11 +149,11 @@ def inject_custom_css():
         font-weight: 600 !important;
         box-shadow: {shadow} !important;
     }}
-    div.stButton > button:hover, div.stDownloadButton > button:hover {{
+    div.stButton > button:hover {{
         background: {accent_hover} !important;
         transform: translateY(-2px);
     }}
-    div.stButton > button *, div.stDownloadButton > button * {{
+    div.stButton > button * {{
         color: #ffffff !important;
     }}
     
@@ -254,6 +256,50 @@ def inject_custom_css():
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
+    
+    import streamlit.components.v1 as components
+    particles_html = f"""
+    <script>
+    if (!parent.document.getElementById('particles-js')) {{
+        const script = parent.document.createElement('script');
+        script.src = "https://cdn.jsdelivr.net/particles.js/2.0.0/particles.min.js";
+        script.onload = () => {{
+            const div = parent.document.createElement('div');
+            div.id = 'particles-js';
+            div.style.position = 'fixed';
+            div.style.top = '0';
+            div.style.left = '0';
+            div.style.width = '100vw';
+            div.style.height = '100vh';
+            div.style.zIndex = '0';
+            parent.document.body.prepend(div);
+            parent.particlesJS("particles-js", {{
+              "particles": {{
+                "number": {{"value": 60}},
+                "color": {{"value": "{particle_color}"}},
+                "shape": {{"type": "circle"}},
+                "opacity": {{"value": 0.4}},
+                "size": {{"value": 3}},
+                "line_linked": {{"enable": true, "distance": 150, "color": "{particle_color}", "opacity": 0.3, "width": 1}},
+                "move": {{"enable": true, "speed": 1}}
+              }},
+              "interactivity": {{
+                "events": {{
+                  "onhover": {{"enable": true, "mode": "grab"}},
+                  "onclick": {{"enable": true, "mode": "push"}}
+                }}
+              }},
+              "retina_detect": true
+            }});
+        }};
+        parent.document.head.appendChild(script);
+    }} else {{
+        // Force update color if it exists by destroying and recreating or simply forcing reload
+        // A simple page refresh works well for themes in streamlit
+    }}
+    </script>
+    """
+    components.html(particles_html, height=0, width=0)
 
 inject_custom_css()
 
@@ -355,16 +401,27 @@ def page_ranker():
         
         st.markdown("<br>### Top Recommendations", unsafe_allow_html=True)
         
-        # DYNAMIC LIST CARD
-        st.markdown("<div class='candidate-card'>", unsafe_allow_html=True)
-        
-        # Prepare display dataframe
-        df_display = df[['rank', 'current_title', 'candidate_id', 'final_score', 'skill_match_score', 'experience_score', 'platform_signal_score', 'reasoning']].copy()
-        df_display.columns = ['Rank', 'Title', 'Candidate ID', 'Final Score', 'Skills', 'Experience', 'Platform', 'AI Reasoning']
-        
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
-        
-        st.markdown("</div>", unsafe_allow_html=True)
+        # DYNAMIC CARDS
+        for idx, row in df.iterrows():
+            reasoning_html = f"<div class='card-reasoning'>{row['reasoning']}</div>" if row['reasoning'] else ""
+            
+            card_html = f"""
+            <div class='candidate-card'>
+                <div class='card-header'>
+                    <h3 class='card-title'>#{row['rank']} - {row['current_title']} <span style='font-size:0.9rem; font-weight:400; opacity:0.7;'>({row['candidate_id']})</span></h3>
+                    <h2 class='card-score'>{row['final_score']:.3f}</h2>
+                </div>
+                <div class='score-grid'>
+                    <div class='score-box'><span class='score-label'>Skills</span><span class='score-value'>{row['skill_match_score']:.2f}</span></div>
+                    <div class='score-box'><span class='score-label'>Exp</span><span class='score-value'>{row['experience_score']:.2f}</span></div>
+                    <div class='score-box'><span class='score-label'>Edu</span><span class='score-value'>{row['education_score']:.2f}</span></div>
+                    <div class='score-box'><span class='score-label'>Trajectory</span><span class='score-value'>{row['trajectory_score']:.2f}</span></div>
+                    <div class='score-box'><span class='score-label'>Platform</span><span class='score-value'>{row['platform_signal_score']:.2f}</span></div>
+                </div>
+                {reasoning_html}
+            </div>
+            """
+            st.markdown(card_html, unsafe_allow_html=True)
             
         csv_path = 'outputs/ranked_streamlit.csv'
         write_submission(df, csv_path)
@@ -467,11 +524,7 @@ def page_deep_dive():
         })
         st.bar_chart(score_df.set_index('Category')['Score'], color="#e56b40")
         
-        st.markdown("#### Profile Summary")
-        summary_text = row.get('profile_summary', 'N/A')
-        bg_col = "rgba(0,0,0,0.02)" if st.session_state.theme == 'light' else "rgba(255,255,255,0.02)"
-        bord_col = "rgba(0,0,0,0.06)" if st.session_state.theme == 'light' else "rgba(255,255,255,0.06)"
-        st.markdown(f"<div style='font-family: \"DM Sans\", sans-serif; font-size: 1.05rem; line-height: 1.7; background: {bg_col}; padding: 1.5rem; border-radius: 12px; border: 1px solid {bord_col};'>{summary_text}</div>", unsafe_allow_html=True)
+        st.text_area("Summary", row.get('profile_summary', 'N/A'), height=200, disabled=True)
 
 # --- ROUTER ---
 pages = {
@@ -486,3 +539,9 @@ with st.sidebar:
     selection = st.radio("Go to:", list(pages.keys()), label_visibility="collapsed")
 
 pages[selection]()
+'''
+
+with open('app.py', 'w', encoding='utf-8') as f:
+    f.write(new_app_content)
+
+print("Massive rewrite complete!")

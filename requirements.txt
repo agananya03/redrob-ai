@@ -10,4 +10,4 @@ tqdm==4.67.1
 groq==1.4.0
 lightgbm==4.6.0
 matplotlib==3.10.0
-gender-guesser==0.4.0
+gender-guesser==0.4.0torch

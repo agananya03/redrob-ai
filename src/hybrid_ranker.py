@@ -44,6 +44,7 @@ class HybridRanker:
              jd_text: str,
              top_n: int = None,
              use_ltr: bool = True,
+             use_cross_encoder: bool = False,
              ablation_feature: str = None) -> pd.DataFrame:
         """
         Ranks candidates based on a weighted combination of structured and semantic scores.
@@ -145,6 +146,39 @@ class HybridRanker:
             else:
                 logger.warning('relevance_labels.csv not found, falling back to weighted sum. Run label_candidates.py first.')
                 
+        if use_cross_encoder:
+            start_ce = time.time()
+            from sentence_transformers import CrossEncoder
+            logger.info("Running CrossEncoder on top 300 candidates...")
+            
+            # Sort first by final_score descending to get the best candidates
+            df = df.sort_values(by='final_score', ascending=False).reset_index(drop=True)
+            
+            top_k = min(300, len(df))
+            top_df = df.head(top_k).copy()
+            rest_df = df.iloc[top_k:].copy()
+            
+            ce_model = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+            pairs = [[jd_text, str(summary)] for summary in top_df['profile_summary']]
+            
+            ce_scores = ce_model.predict(pairs)
+            
+            # Min-Max normalize ce_scores to [10.0, 20.0] to stay strictly above LightGBM scores
+            import numpy as np
+            ce_min, ce_max = np.min(ce_scores), np.max(ce_scores)
+            if ce_max > ce_min:
+                norm_ce = 10.0 + 10.0 * (ce_scores - ce_min) / (ce_max - ce_min)
+            else:
+                norm_ce = 10.0
+                
+            top_df['final_score'] = norm_ce
+            
+            # Combine back
+            df = pd.concat([top_df, rest_df]).reset_index(drop=True)
+            
+            ce_time = time.time() - start_ce
+            logger.info(f"Cross-encoder reranking took {ce_time:.2f} seconds.")
+
         df['calibrated_score'] = df['final_score'].rank(pct=True).round(4)
         
         # 8 & 9. Sort descending and add rank

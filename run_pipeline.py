@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
-def run_on_sample(use_ltr=None):
+def run_on_sample(use_ltr=None, use_cross_encoder=False):
     """
     Convenience function that runs the full pipeline on sample_candidates.json
     with skip_llm=True.
@@ -25,7 +25,7 @@ def run_on_sample(use_ltr=None):
     print(f"Loaded {len(candidates)} candidates. Running hybrid scoring...")
     
     ranker = HybridRanker()
-    ranked = ranker.rank(candidates, jd_text, top_n=100, use_ltr=use_ltr)
+    ranked = ranker.rank(candidates, jd_text, top_n=100, use_ltr=use_ltr, use_cross_encoder=use_cross_encoder)
     
     # skip_llm=True
     ranked = ranker.llm_rerank(ranked, jd_text, skip_llm=True)
@@ -54,11 +54,13 @@ def run():
                              'the weighted sum if relevance_labels.csv is missing/too small.')
     parser.add_argument('--no_ltr', dest='use_ltr', action='store_false',
                         help='Force the hand-set weighted sum, even if relevance_labels.csv exists.')
+    parser.add_argument('--cross_encoder', action='store_true',
+                        help='Use CrossEncoder to rerank the top 300 candidates.')
 
     args = parser.parse_args()
 
     if args.sample:
-        run_on_sample(use_ltr=args.use_ltr)
+        run_on_sample(use_ltr=args.use_ltr, use_cross_encoder=args.cross_encoder)
         return
 
     start_time = time.time()
@@ -69,7 +71,7 @@ def run():
     print(f"Loaded {len(candidates)} candidates. Running hybrid scoring...")
     
     ranker = HybridRanker()
-    ranked = ranker.rank(candidates, jd_text, top_n=args.top_n, use_ltr=args.use_ltr)
+    ranked = ranker.rank(candidates, jd_text, top_n=args.top_n, use_ltr=args.use_ltr, use_cross_encoder=args.cross_encoder)
     
     if not args.skip_llm:
         ranked = ranker.llm_rerank(ranked, jd_text)

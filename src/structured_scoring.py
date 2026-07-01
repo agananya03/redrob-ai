@@ -6,6 +6,8 @@ Calculates candidate ranking scores based on structured data.
 
 import logging
 import re
+import os
+import json
 from datetime import datetime, date
 from src.preprocessing import extract_platform_signals
 
@@ -21,12 +23,61 @@ DEFAULT_WEIGHTS = {
 
 class StructuredScorer:
     def __init__(self):
+        self.esco_extractor = None
+        self.esco_failed = False
         self._jd_cache = {}
         # Precompile regular expressions for efficiency
+        import re
         self.degree_ms_re = re.compile(r'\bms\b|\bm\.s\b', re.IGNORECASE)
         self.degree_be_re = re.compile(r'\bbe\b|\bbs\b', re.IGNORECASE)
         self.field_cs_re = re.compile(r'\bcs\b|\bai\b|\bml\b', re.IGNORECASE)
         self.it_re = re.compile(r'\bit\b', re.IGNORECASE)
+
+    def _get_jd_esco_skills(self, jd_text: str) -> set:
+        cache_path = 'data/processed/jd_esco_skills.json'
+        
+        # 1. Try cache
+        import os
+        if os.path.exists(cache_path):
+            try:
+                import json
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    return set(json.load(f))
+            except Exception as e:
+                logger.warning(f"Failed to load JD ESCO skills from cache: {e}")
+                
+        # 2. Extract
+        if self.esco_failed:
+            return set()
+            
+        if self.esco_extractor is None:
+            try:
+                from esco_skill_extractor import SkillExtractor
+                self.esco_extractor = SkillExtractor()
+            except Exception as e:
+                logger.warning(f"Failed to initialize esco_skill_extractor: {e}")
+                self.esco_failed = True
+                return set()
+                
+        try:
+            # get_skills expects List[str]
+            jd_skills_lists = self.esco_extractor.get_skills([jd_text])
+            if jd_skills_lists and len(jd_skills_lists) > 0:
+                jd_skills = set(jd_skills_lists[0])
+            else:
+                jd_skills = set()
+                
+            # Cache it
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            import json
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(list(jd_skills), f)
+                
+            return jd_skills
+        except Exception as e:
+            logger.warning(f"Failed to extract JD ESCO skills: {e}")
+            self.esco_failed = True
+            return set()
 
     def _get_jd_info(self, jd_text: str):
         if jd_text in self._jd_cache:
@@ -43,6 +94,7 @@ class StructuredScorer:
         
         jd_text_lower = jd_text.lower()
         jd_skills = set()
+        import re
         for term in known_tech_terms:
             escaped = re.escape(term)
             if re.search(r'\b' + escaped + r'\b', jd_text_lower):
@@ -102,60 +154,79 @@ class StructuredScorer:
         # -------------------------------------------------------------
         # SUB-SCORE 1: skill_match_score (0.0-1.0)
         # -------------------------------------------------------------
+        jd_esco_skills = self._get_jd_esco_skills(jd_text)
         candidate_skills = candidate_dict.get('skills')
         if candidate_skills is None:
             # Fallback if profile format skill_names is present
             skill_names = candidate_dict.get('skill_names') or []
             candidate_skills = [{'name': name} for name in skill_names]
 
-        matched_score = 0.0
-        for s in candidate_skills:
-            if not isinstance(s, dict) or 'name' not in s or s['name'] is None:
-                continue
-            skill_name = str(s['name']).lower()
-            
-            # Check for partial case-insensitive match
-            matched = False
-            for jd_s in jd_skills:
-                if jd_s in skill_name or skill_name in jd_s:
-                    matched = True
-                    break
-            
-            if matched:
-                # Proficiency weight
-                prof = str(s.get('proficiency') or '').lower().strip()
-                if prof == 'beginner':
-                    prof_weight = 0.40
-                elif prof == 'intermediate':
-                    prof_weight = 0.60
-                elif prof == 'advanced':
-                    prof_weight = 0.85
-                elif prof == 'expert':
-                    prof_weight = 1.00
+        use_esco = not self.esco_failed and len(jd_esco_skills) > 0
+        
+        if use_esco:
+            cand_text = " ".join([str(s.get('name', '')) for s in candidate_skills])
+            try:
+                cand_skills_lists = self.esco_extractor.get_skills([cand_text])
+                if cand_skills_lists and len(cand_skills_lists) > 0:
+                    cand_esco_skills = set(cand_skills_lists[0])
                 else:
-                    prof_weight = 0.50
+                    cand_esco_skills = set()
+                    
+                intersect = jd_esco_skills.intersection(cand_esco_skills)
+                skill_match_score = min(1.0, len(intersect) / max(len(jd_esco_skills), 1))
+            except Exception as e:
+                logger.warning(f"Candidate ESCO extraction failed: {e}. Falling back.")
+                use_esco = False
+
+        if not use_esco:
+            matched_score = 0.0
+            for s in candidate_skills:
+                if not isinstance(s, dict) or 'name' not in s or s['name'] is None:
+                    continue
+                skill_name = str(s['name']).lower()
                 
-                # Confidence multiplier
-                endorsements = s.get('endorsements')
-                if endorsements is None:
-                    endorsements = 0
-                try:
-                    endorsements = float(endorsements)
-                except (ValueError, TypeError):
-                    endorsements = 0.0
-
-                duration_months = s.get('duration_months')
-                if duration_months is None:
-                    duration_months = 0
-                try:
-                    duration_months = float(duration_months)
-                except (ValueError, TypeError):
-                    duration_months = 0.0
-
-                confidence_mult = min(1.0, endorsements * 0.05 + duration_months / 60)
-                matched_score += (prof_weight * confidence_mult)
-
-        skill_match_score = min(1.0, matched_score / max(len(jd_skills), 1))
+                # Check for partial case-insensitive match
+                matched = False
+                for jd_s in jd_skills:
+                    if jd_s in skill_name or skill_name in jd_s:
+                        matched = True
+                        break
+                
+                if matched:
+                    # Proficiency weight
+                    prof = str(s.get('proficiency') or '').lower().strip()
+                    if prof == 'beginner':
+                        prof_weight = 0.40
+                    elif prof == 'intermediate':
+                        prof_weight = 0.60
+                    elif prof == 'advanced':
+                        prof_weight = 0.85
+                    elif prof == 'expert':
+                        prof_weight = 1.00
+                    else:
+                        prof_weight = 0.50
+                    
+                    # Confidence multiplier
+                    endorsements = s.get('endorsements')
+                    if endorsements is None:
+                        endorsements = 0
+                    try:
+                        endorsements = float(endorsements)
+                    except (ValueError, TypeError):
+                        endorsements = 0.0
+    
+                    duration_months = s.get('duration_months')
+                    if duration_months is None:
+                        duration_months = 0
+                    try:
+                        duration_months = float(duration_months)
+                    except (ValueError, TypeError):
+                        duration_months = 0.0
+    
+                    confidence_mult = min(1.0, endorsements * 0.05 + duration_months / 60)
+                    matched_score += (prof_weight * confidence_mult)
+    
+            skill_match_score = min(1.0, matched_score / max(len(jd_skills), 1))
 
         # -------------------------------------------------------------
         # SUB-SCORE 2: experience_score (0.0-1.0)
