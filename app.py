@@ -23,7 +23,7 @@ st.set_page_config(
 
 # Initialize Session State
 if 'dataset_path' not in st.session_state:
-    st.session_state.dataset_path = 'data/raw/sample_candidates.json'
+    st.session_state.dataset_path = 'data/raw/sample_candidates_1000.jsonl'
 if 'ranked_df' not in st.session_state:
     st.session_state.ranked_df = None
 if 'raw_candidates' not in st.session_state:
