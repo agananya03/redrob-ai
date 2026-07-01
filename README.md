@@ -2,7 +2,7 @@
 title: Redrob Candidate Ranker
 emoji: 🚀
 colorFrom: red
-colorTo: orange
+colorTo: yellow
 sdk: streamlit
 sdk_version: 1.35.0
 app_file: app.py
