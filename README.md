@@ -1,3 +1,14 @@
+---
+title: Redrob Candidate Ranker
+emoji: 🚀
+colorFrom: red
+colorTo: orange
+sdk: streamlit
+sdk_version: 1.35.0
+app_file: app.py
+pinned: false
+---
+
 # Redrob Candidate Ranker
 
 ![App Screenshot](outputs/finetuning_ndcg_comparison.png) *(Note: Include screenshot of the retro dark-mode UI here if available)*

@@ -258,7 +258,8 @@ class HybridRanker:
             platform_signal_score = row.get('platform_signal_score', 0.0)
             profile_summary = str(row.get('profile_summary', ''))
             
-            user_prompt = f"Job Description:\n{jd_text[:2000]}\n\nCandidate profile:\n- ID: {candidate_id}\n- Title: {current_title}\n- Experience: {years_of_experience} years\n- Score breakdown: skill={skill_match_score:.2f}, exp={experience_score:.2f}, trajectory={trajectory_score:.2f}, platform={platform_signal_score:.2f}\n- Profile summary (first 800 chars): {profile_summary[:800]}\n\nWrite ONE sentence (max 25 words) explaining why this candidate ranks where they do. Start with their strongest relevant signal."
+            # Aggressively truncate to prevent Groq RateLimits (TPM > 30k) on free tier
+            user_prompt = f"Job Description:\n{jd_text[:800]}\n\nCandidate profile:\n- ID: {candidate_id}\n- Title: {current_title}\n- Experience: {years_of_experience} years\n- Score breakdown: skill={skill_match_score:.2f}, exp={experience_score:.2f}, trajectory={trajectory_score:.2f}, platform={platform_signal_score:.2f}\n- Profile summary: {profile_summary[:400]}\n\nWrite ONE sentence (max 25 words) explaining why this candidate ranks where they do. Start with their strongest relevant signal."
 
             try:
                 response = client.chat.completions.create(

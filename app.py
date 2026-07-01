@@ -244,6 +244,49 @@ def inject_custom_css():
         font-style: italic;
     }}
     
+    details.candidate-row {{
+        background-color: {card_bg} !important;
+        border: 1px solid {border} !important;
+        border-radius: 8px;
+        margin-bottom: 8px;
+        overflow: hidden;
+        color: {text_primary} !important;
+    }}
+    details.candidate-row summary {{
+        display: grid;
+        grid-template-columns: 80px 3fr 1fr;
+        padding: 1rem 1.5rem;
+        cursor: pointer;
+        background-color: {bg_primary} !important;
+        font-weight: 600;
+        align-items: center;
+        list-style: none;
+    }}
+    details.candidate-row summary::-webkit-details-marker {{
+        display: none;
+    }}
+    details.candidate-row summary:hover {{
+        background-color: {card_bg} !important;
+    }}
+    .summary-rank {{
+        font-size: 1.1rem;
+        color: {accent} !important;
+    }}
+    .summary-name {{
+        font-size: 1.05rem;
+        color: {text_primary} !important;
+    }}
+    .summary-score {{
+        text-align: right;
+        font-size: 1.1rem;
+        color: {text_primary} !important;
+    }}
+    .details-content {{
+        padding: 1.5rem;
+        border-top: 1px solid {border} !important;
+        background-color: {card_bg} !important;
+    }}
+    
     header[data-testid="stHeader"] {{
         background: transparent !important;
     }}
@@ -355,16 +398,45 @@ def page_ranker():
         
         st.markdown("<br>### Top Recommendations", unsafe_allow_html=True)
         
-        # DYNAMIC LIST CARD
-        st.markdown("<div class='candidate-card'>", unsafe_allow_html=True)
+        # DYNAMIC ACCORDION LIST
+        import html as html_lib
+        html = "<div style='margin-bottom: 2rem;'>"
+        for idx, row in df.iterrows():
+            safe_title = html_lib.escape(str(row['current_title']))
+            
+            html += f"""
+            <details class='candidate-row'>
+                <summary>
+                    <div class='summary-rank'>#{row['rank']}</div>
+                    <div class='summary-name'>{safe_title} <span style='font-size:0.85rem; opacity:0.6; font-weight:400;'>(ID: {row['candidate_id']})</span></div>
+                    <div class='summary-score'>Match: {row['final_score']:.3f}</div>
+                </summary>
+                <div class='details-content'>
+                    <div class='score-grid'>
+                        <div class='score-box'><span class='score-label'>Skills</span><span class='score-value'>{row['skill_match_score']:.2f}</span></div>
+                        <div class='score-box'><span class='score-label'>Exp</span><span class='score-value'>{row['experience_score']:.2f}</span></div>
+                        <div class='score-box'><span class='score-label'>Edu</span><span class='score-value'>{row['education_score']:.2f}</span></div>
+                        <div class='score-box'><span class='score-label'>Trajectory</span><span class='score-value'>{row['trajectory_score']:.2f}</span></div>
+                        <div class='score-box'><span class='score-label'>Platform</span><span class='score-value'>{row['platform_signal_score']:.2f}</span></div>
+                    </div>
+            """
+            if row.get('reasoning'):
+                safe_reasoning = html_lib.escape(str(row['reasoning']))
+                html += f"""
+                    <div class='card-reasoning' style='margin-top: 15px;'>
+                        <span style='color: #e56b40; font-weight: bold;'>AI Reasoning:</span> {safe_reasoning}
+                    </div>
+                """
+            html += """
+                </div>
+            </details>
+            """
+        html += "</div>"
         
-        # Prepare display dataframe
-        df_display = df[['rank', 'current_title', 'candidate_id', 'final_score', 'skill_match_score', 'experience_score', 'platform_signal_score', 'reasoning']].copy()
-        df_display.columns = ['Rank', 'Title', 'Candidate ID', 'Final Score', 'Skills', 'Experience', 'Platform', 'AI Reasoning']
-        
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
-        
-        st.markdown("</div>", unsafe_allow_html=True)
+        # Streamlit's markdown parser breaks if there are blank lines in raw HTML blocks.
+        # Removing all newlines guarantees the entire accordion is parsed as one valid HTML node.
+        clean_html = html.replace('\n', '')
+        st.markdown(clean_html, unsafe_allow_html=True)
             
         csv_path = 'outputs/ranked_streamlit.csv'
         write_submission(df, csv_path)
