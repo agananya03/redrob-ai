@@ -34,19 +34,16 @@ class StructuredScorer:
         self.it_re = re.compile(r'\bit\b', re.IGNORECASE)
 
     def _get_jd_esco_skills(self, jd_text: str) -> set:
-        cache_path = 'data/processed/jd_esco_skills.json'
+        if not hasattr(self, '_esco_cache'):
+            self._esco_cache = {}
+            
+        import hashlib
+        jd_hash = hashlib.md5(jd_text.encode('utf-8')).hexdigest()
         
-        # 1. Try cache
-        import os
-        if os.path.exists(cache_path):
-            try:
-                import json
-                with open(cache_path, 'r', encoding='utf-8') as f:
-                    return set(json.load(f))
-            except Exception as e:
-                logger.warning(f"Failed to load JD ESCO skills from cache: {e}")
-                
-        # 2. Extract
+        if jd_hash in self._esco_cache:
+            return self._esco_cache[jd_hash]
+            
+        # Extract
         if self.esco_failed:
             return set()
             
@@ -67,12 +64,7 @@ class StructuredScorer:
             else:
                 jd_skills = set()
                 
-            # Cache it
-            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-            import json
-            with open(cache_path, 'w', encoding='utf-8') as f:
-                json.dump(list(jd_skills), f)
-                
+            self._esco_cache[jd_hash] = jd_skills
             return jd_skills
         except Exception as e:
             logger.warning(f"Failed to extract JD ESCO skills: {e}")
