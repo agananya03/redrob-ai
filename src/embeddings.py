@@ -98,6 +98,8 @@ class EmbeddingScorer:
             return result
             
         show_progress = len(profiles) > batch_size
+        needs_save = False
+        processed_since_save = 0
         
         for i in tqdm(range(0, len(profiles), batch_size), disable=not show_progress, desc="Embedding candidates"):
             batch_profiles = profiles[i:i+batch_size]
@@ -116,7 +118,13 @@ class EmbeddingScorer:
                 embs = self.model.encode(to_encode_texts, batch_size=batch_size)
                 for h, emb in zip(to_encode_hashes, embs):
                     self._cache[h] = emb
-                self.save_cache()
+                needs_save = True
+                processed_since_save += len(to_encode_texts)
+                
+                if processed_since_save >= 5000:
+                    self.save_cache()
+                    processed_since_save = 0
+                    needs_save = False
                 
             for p in batch_profiles:
                 cid = p.get('candidate_id', 'UNKNOWN')
@@ -124,6 +132,9 @@ class EmbeddingScorer:
                 text_hash = hashlib.md5(summary.encode('utf-8')).hexdigest()
                 result[cid] = self._cache[text_hash]
                 
+        if needs_save:
+            self.save_cache()
+            
         return result
 
     def score(self, jd_embedding: np.ndarray,
