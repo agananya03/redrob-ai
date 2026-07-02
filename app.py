@@ -1,9 +1,11 @@
-import streamlit as st
 import os
+import streamlit as st
 import time
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
 from dotenv import load_dotenv
 
 # Load dependencies securely with caching
@@ -400,7 +402,6 @@ def page_ranker():
         
         # Add CSV export for the hackathon submission
         from src.output_writer import write_submission
-        import os
         
         team_id = st.text_input("Enter your Team ID for submission:", value="team_default")
         safe_team_id = "".join([c for c in team_id if c.isalnum() or c in ['_', '-']])
