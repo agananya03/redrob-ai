@@ -340,11 +340,11 @@ def page_ranker():
         st.markdown("### Data Source")
         dataset_choice = st.radio(
             "Select Candidates Dataset:",
-            ("Sample Data (50 rows)", "Full Data (100k rows)"),
+            ("Sample Data (1000 rows)", "Full Data (100k rows)"),
             index=0 if 'sample' in st.session_state.dataset_path else 1
         )
-        if dataset_choice == "Sample Data (50 rows)":
-            st.session_state.dataset_path = 'data/raw/sample_candidates.json'
+        if dataset_choice == "Sample Data (1000 rows)":
+            st.session_state.dataset_path = 'data/raw/sample_candidates_1000.jsonl'
         else:
             st.session_state.dataset_path = 'data/raw/candidates.jsonl'
 
