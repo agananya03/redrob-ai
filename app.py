@@ -331,7 +331,7 @@ def page_ranker():
             
         st.markdown("---")
         st.markdown("### Configuration")
-        top_n = st.slider("Top N candidates to display", min_value=5, max_value=50, value=15)
+        top_n = st.slider("Top N candidates to display", min_value=5, max_value=100, value=100)
         
         has_api_key = bool(os.getenv('GROQ_API_KEY'))
         use_llm = st.checkbox("Enable LLM Reasoning", value=has_api_key, disabled=not has_api_key)
