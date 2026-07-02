@@ -59,23 +59,72 @@ def compute_ndcg(
 
 def compare_rankers(candidates: list[dict], jd_text: str) -> None:
     """
-    Runs HybridRanker with and without LTR and prints a side-by-side NDCG comparison.
+    Runs HybridRanker with and without LTR and prints a side-by-side NDCG comparison,
+    ensuring a proper train/test split to avoid label leakage.
     """
-    print("Running Weighted Sum baseline...")
-    ranker = HybridRanker()
+    import os
+    import pandas as pd
+    from sklearn.model_selection import train_test_split
     
-    # 1. Run Weighted Sum
+    labels_path = 'data/processed/relevance_labels.csv'
+    if not os.path.exists(labels_path):
+        print(f"Labels file not found at {labels_path}")
+        return
+        
+    labels_df = pd.read_csv(labels_path)
+    if len(labels_df) < 10:
+        print("Not enough labels for train/test split.")
+        return
+        
+    # Create an 80/20 train/test split for valid NDCG calculation
+    train_labels, test_labels = train_test_split(labels_df, test_size=0.2, random_state=42)
+    
+    # Temporarily save train/test splits for the ranker to use during evaluation
+    train_labels.to_csv('data/processed/temp_train_labels.csv', index=False)
+    test_labels.to_csv('data/processed/temp_test_labels.csv', index=False)
+    
+    # Get all candidate IDs in the test set to evaluate
+    test_candidate_ids = set(test_labels['candidate_id'].astype(str))
+    
+    # Filter full candidate list to only those in the test set for fair comparison
+    test_candidates = [c for c in candidates if str(c.get('candidate_id')) in test_candidate_ids]
+    
+    print("Running Weighted Sum baseline (on all candidates)...")
+    ranker = HybridRanker()
     df_weighted = ranker.rank(candidates, jd_text, use_ltr=False)
     
-    print("\nRunning LightGBM LTR...")
-    # 2. Run LightGBM LTR
-    df_ltr = ranker.rank(candidates, jd_text, use_ltr=True)
+    print("\nTraining LightGBM LTR on Train Set & Predicting...")
+    # Temporarily rename the labels file so HybridRanker uses the train set for training
+    os.rename('data/processed/relevance_labels.csv', 'data/processed/relevance_labels_backup.csv')
+    os.rename('data/processed/temp_train_labels.csv', 'data/processed/relevance_labels.csv')
     
-    print("\nComputing NDCG for Weighted Sum:")
-    ndcg_weighted = compute_ndcg(df_weighted)
+    # Also remove the existing model so it is forced to re-train on the temp train set
+    model_path = 'data/processed/ltr_model.pkl'
+    model_backup = 'data/processed/ltr_model_backup.pkl'
+    if os.path.exists(model_path):
+        os.rename(model_path, model_backup)
+        
+    try:
+        df_ltr = ranker.rank(candidates, jd_text, use_ltr=True)
+    finally:
+        # Clean up and restore original files
+        os.remove('data/processed/relevance_labels.csv')
+        os.rename('data/processed/relevance_labels_backup.csv', 'data/processed/relevance_labels.csv')
+        
+        if os.path.exists(model_path):
+            os.remove(model_path)
+        if os.path.exists(model_backup):
+            os.rename(model_backup, model_path)
     
-    print("\nComputing NDCG for LightGBM LTR:")
-    ndcg_ltr = compute_ndcg(df_ltr)
+    print("\nComputing TRUE NDCG for Weighted Sum (Held-out Test Set):")
+    ndcg_weighted = compute_ndcg(df_weighted, labels_path='data/processed/temp_test_labels.csv')
+    
+    print("\nComputing TRUE NDCG for LightGBM LTR (Held-out Test Set):")
+    ndcg_ltr = compute_ndcg(df_ltr, labels_path='data/processed/temp_test_labels.csv')
+    
+    # Clean up temp test labels after evaluation is complete
+    if os.path.exists('data/processed/temp_test_labels.csv'):
+        os.remove('data/processed/temp_test_labels.csv')
     
     if not ndcg_weighted or not ndcg_ltr:
         print("\nCould not generate comparison due to missing NDCG scores.")

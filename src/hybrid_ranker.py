@@ -108,19 +108,8 @@ class HybridRanker:
                 
             struct_total = struct_res['total_score']
             
-            # Base final score
-            base_final = self.structured_weight * struct_total + self.semantic_weight * sem_score
-            
-            # Behavioral signal blending (multiplier)
-            platform_signal = struct_res['platform_signal_score']
-            if ablation_feature == 'platform_signal_score':
-                platform_signal = 0.5
-                
-            final_score = base_final * (0.8 + 0.4 * platform_signal)
-            
-            # If honeypot, strictly zero
-            if struct_res.get('is_honeypot'):
-                final_score = 0.0
+            # Base final score (before LTR / compliance)
+            final_score = self.structured_weight * struct_total + self.semantic_weight * sem_score
             
             rows.append({
                 'candidate_id': cid,
@@ -135,7 +124,9 @@ class HybridRanker:
                 'current_title': prof['current_title'],
                 'years_of_experience': prof['years_of_experience'],
                 'location': prof['location'],
-                'profile_summary': prof.get('profile_summary', '')
+                'profile_summary': prof.get('profile_summary', ''),
+                'is_honeypot': struct_res.get('is_honeypot', False),
+                'disqualifier_mult': struct_res.get('disqualifier_mult', 1.0)
             })
             
         df = pd.DataFrame(rows)
@@ -190,6 +181,20 @@ class HybridRanker:
             
             ce_time = time.time() - start_ce
             logger.info(f"Cross-encoder reranking took {ce_time:.2f} seconds.")
+
+        # --- COMPLIANCE & BEHAVIORAL MULTIPLIERS (Applied on top of LTR/CE) ---
+        
+        # 1. Behavioral Blending
+        platform_sig = df['platform_signal_score']
+        if ablation_feature == 'platform_signal_score':
+            platform_sig = 0.5
+        df['final_score'] = df['final_score'] * (0.8 + 0.4 * platform_sig)
+        
+        # 2. JD Disqualifiers
+        df['final_score'] = df['final_score'] * df['disqualifier_mult']
+        
+        # 3. Honeypot Zeroing
+        df.loc[df['is_honeypot'] == True, 'final_score'] = 0.0
 
         df['calibrated_score'] = df['final_score'].rank(pct=True).round(4)
         
