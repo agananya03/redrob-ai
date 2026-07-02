@@ -1,17 +1,4 @@
----
-title: Redrob Candidate Ranker
-emoji: 🚀
-colorFrom: red
-colorTo: yellow
-sdk: streamlit
-sdk_version: 1.35.0
-app_file: app.py
-pinned: false
----
-
 # Redrob Candidate Ranker
-
-![App Screenshot](outputs/finetuning_ndcg_comparison.png) *(Note: Include screenshot of the retro dark-mode UI here if available)*
 
 ## Problem
 Recruiters manually sift through thousands of candidate profiles. Traditional keyword filters often miss the right person due to minor vocabulary differences or rigid matching criteria. We built a sophisticated **hybrid AI ranker** to evaluate candidates deeply, semantically, and structurally.
