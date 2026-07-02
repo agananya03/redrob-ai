@@ -36,17 +36,23 @@ def load_candidates(path: str) -> list[dict]:
     if path_lower.endswith('.jsonl'):
         try:
             with open(path, 'r', encoding='utf-8') as f:
-                for line_num, line in enumerate(f, 1):
-                    line_str = line.strip()
-                    if not line_str:
-                        continue
-                    try:
-                        record = json.loads(line_str)
-                        records.append(record)
-                    except Exception as e:
-                        logger.warning(f"Failed to parse line {line_num} in {path}: {e}")
+                content = f.read()
+        except UnicodeDecodeError:
+            with open(path, 'r', encoding='utf-16') as f:
+                content = f.read()
         except Exception as e:
             logger.error(f"Failed to open/read jsonl file {path}: {e}")
+            content = ""
+            
+        for line_num, line in enumerate(content.splitlines(), 1):
+            line_str = line.strip()
+            if not line_str:
+                continue
+            try:
+                record = json.loads(line_str)
+                records.append(record)
+            except Exception as e:
+                logger.warning(f"Failed to parse line {line_num} in {path}: {e}")
     else:
         try:
             with open(path, 'r', encoding='utf-8') as f:
