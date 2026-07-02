@@ -1,0 +1,4 @@
+team_id: team_default
+pre_computation_required: true
+sandbox_url: "Local Execution / Streamlit Run"
+description: "Redrob Ranker Pipeline featuring Hybrid LTR, Smart Truncation, and Explicit Rule-Based Penetration"

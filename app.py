@@ -376,8 +376,8 @@ def page_ranker():
             df = ranker.rank(candidates, jd_input, top_n=top_n)
             
             if use_llm:
-                with st.spinner("Generating AI justifications..."):
-                    df = ranker.llm_rerank(df, jd_input, skip_llm=False)
+                with st.spinner("Generating reasoning templates..."):
+                    df = ranker.generate_reasoning(df)
             else:
                 df['reasoning'] = ""
                 
@@ -397,6 +397,28 @@ def page_ranker():
         m3.metric("Total Profiles Analyzed", f"{len(st.session_state.raw_candidates) if st.session_state.raw_candidates else len(df):,}")
         
         st.markdown("<br>### Top Recommendations", unsafe_allow_html=True)
+        
+        # Add CSV export for the hackathon submission
+        from src.output_writer import write_submission
+        import os
+        
+        team_id = st.text_input("Enter your Team ID for submission:", value="team_default")
+        safe_team_id = "".join([c for c in team_id if c.isalnum() or c in ['_', '-']])
+        if not safe_team_id:
+            safe_team_id = "team_default"
+            
+        csv_filename = f"{safe_team_id}.csv"
+        
+        write_submission(df, f'outputs/{csv_filename}')
+        if os.path.exists(f'outputs/{csv_filename}'):
+            with open(f'outputs/{csv_filename}', 'rb') as f:
+                st.download_button(
+                    label="📥 Download Hackathon Submission CSV",
+                    data=f,
+                    file_name=csv_filename,
+                    mime="text/csv",
+                    use_container_width=True
+                )
         
         # DYNAMIC ACCORDION LIST
         import html as html_lib

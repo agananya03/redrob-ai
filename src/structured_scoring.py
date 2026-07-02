@@ -9,6 +9,7 @@ import re
 import os
 import json
 from datetime import datetime, date
+from collections import defaultdict
 from src.preprocessing import extract_platform_signals
 
 logger = logging.getLogger(__name__)
@@ -110,6 +111,136 @@ class StructuredScorer:
         info = (jd_skills, min_required)
         self._jd_cache[jd_text] = info
         return info
+
+    def detect_honeypot(self, candidate_dict: dict) -> bool:
+        """
+        Returns True if the candidate is a honeypot (logically impossible profile).
+        """
+        # 1. Years of experience > 50
+        yoe = candidate_dict.get('years_of_experience')
+        if yoe is None:
+            yoe = candidate_dict.get('profile', {}).get('years_of_experience')
+        if yoe is not None:
+            try:
+                if float(yoe) > 50:
+                    return True
+            except ValueError:
+                pass
+
+        # 2. Start date in the future or overlapping roles
+        career_history = candidate_dict.get('career_history', [])
+        if not isinstance(career_history, list):
+            career_history = []
+        
+        today = datetime.now()
+        active_roles = 0
+        
+        for role in career_history:
+            if not isinstance(role, dict):
+                continue
+            # Check future start date
+            start_date_str = role.get('start_date')
+            if start_date_str:
+                try:
+                    dt = datetime.strptime(str(start_date_str), "%Y-%m-%d")
+                    if dt > today:
+                        return True
+                except Exception:
+                    pass
+            
+            # Count currently active roles (no end date or end date in future)
+            end_date_str = role.get('end_date')
+            if not end_date_str:
+                active_roles += 1
+            else:
+                try:
+                    edt = datetime.strptime(str(end_date_str), "%Y-%m-%d")
+                    if edt > today:
+                        active_roles += 1
+                except Exception:
+                    pass
+
+        # If more than 3 simultaneous active roles (likely fake)
+        if active_roles > 3:
+            return True
+
+        # 3. Expert skill but duration < 12 months
+        skills = candidate_dict.get('skills', [])
+        if isinstance(skills, list):
+            for s in skills:
+                if isinstance(s, dict):
+                    prof = str(s.get('proficiency', '')).lower()
+                    dur = s.get('duration_months')
+                    if prof == 'expert' and dur is not None:
+                        try:
+                            if float(dur) < 12:
+                                return True
+                        except ValueError:
+                            pass
+
+        return False
+
+    def apply_jd_disqualifiers(self, candidate_dict: dict, jd_text: str) -> float:
+        """
+        Returns a penalty multiplier (0.1 to 1.0) based on strict JD disqualifiers.
+        """
+        multiplier = 1.0
+        
+        prof = candidate_dict.get('profile', {})
+        current_title = str(prof.get('current_title') or '').lower()
+        
+        # 1. Title Mismatch (e.g. Marketing Manager for AI role)
+        non_eng_titles = ['marketing', 'hr', 'human resources', 'sales', 'accountant', 'finance', 'recruiter']
+        for t in non_eng_titles:
+            if t in current_title and 'engineer' not in current_title and 'data' not in current_title:
+                multiplier *= 0.1
+                break
+                
+        career_history = candidate_dict.get('career_history', [])
+        is_pure_consulting = True
+        has_production = False
+        has_nlp = False
+        witch_firms = ['tcs', 'infosys', 'wipro', 'cognizant', 'hcl', 'accenture', 'capgemini']
+        
+        for role in career_history:
+            if not isinstance(role, dict):
+                continue
+            comp = str(role.get('company') or '').lower()
+            desc = str(role.get('description') or '').lower()
+            title = str(role.get('title') or '').lower()
+            
+            if not any(w in comp for w in witch_firms):
+                is_pure_consulting = False
+                
+            if 'production' in desc or 'deployed' in desc or 'shipped' in desc or 'scale' in desc:
+                has_production = True
+                
+            if 'nlp' in desc or 'natural language' in desc or 'llm' in desc or 'text' in desc or 'information retrieval' in desc or 'nlp' in title:
+                has_nlp = True
+
+        # 2. Consulting Only
+        if career_history and is_pure_consulting:
+            multiplier *= 0.5
+            
+        # 3. Research Only (No production)
+        if 'research' in current_title and not has_production:
+            multiplier *= 0.5
+            
+        # 4. Location/Notice
+        loc = str(prof.get('location') or '').lower()
+        pref_locs = ['pune', 'noida', 'hyderabad', 'mumbai', 'delhi', 'ncr']
+        if loc and not any(p in loc for p in pref_locs):
+            multiplier *= 0.7
+            
+        notice = prof.get('notice_period_days')
+        if notice is not None:
+            try:
+                if float(notice) > 60:
+                    multiplier *= 0.8
+            except ValueError:
+                pass
+                
+        return multiplier
 
     def score(self, candidate_dict: dict, jd_text: str, weights: dict = None) -> dict:
         """
@@ -540,9 +671,22 @@ class StructuredScorer:
             weights['skill'] * skill_match_score +
             weights['experience'] * experience_score +
             weights['education'] * education_score +
-            weights['trajectory'] * trajectory_score +
-            weights['platform_signal'] * platform_signal_score
+            weights['trajectory'] * trajectory_score
+            # platform_signal is now handled separately in hybrid_ranker.py
         )
+
+        # Re-scale because we removed platform_signal from this additive base
+        # Original sum was 0.3+0.2+0.1+0.2+0.2 = 1.0. Now it's 0.8.
+        total_score = total_score / 0.8
+
+        # Honeypot Check
+        is_honeypot = self.detect_honeypot(candidate_dict)
+        if is_honeypot:
+            total_score = 0.0
+
+        # JD Disqualifiers
+        disqualifier_mult = self.apply_jd_disqualifiers(candidate_dict, jd_text)
+        total_score *= disqualifier_mult
 
         return {
             'skill_match_score': skill_match_score,
@@ -550,5 +694,7 @@ class StructuredScorer:
             'education_score': education_score,
             'trajectory_score': trajectory_score,
             'platform_signal_score': platform_signal_score,
-            'total_score': total_score
+            'total_score': total_score,
+            'is_honeypot': is_honeypot,
+            'disqualifier_mult': disqualifier_mult
         }

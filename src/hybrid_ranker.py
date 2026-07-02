@@ -92,23 +92,35 @@ class HybridRanker:
                 struct_res[ablation_feature] = 0.0
                 
                 # Re-compute structured_total
+                # Re-compute structured_total
                 weights_to_use = self.structured_score_weights or {
                     'skill': 0.30, 'experience': 0.20, 'education': 0.10,
-                    'trajectory': 0.20, 'platform_signal': 0.20
+                    'trajectory': 0.20
                 }
                 
                 recomputed_total = (
                     weights_to_use['skill'] * struct_res['skill_match_score'] +
                     weights_to_use['experience'] * struct_res['experience_score'] +
                     weights_to_use['education'] * struct_res['education_score'] +
-                    weights_to_use['trajectory'] * struct_res['trajectory_score'] +
-                    weights_to_use['platform_signal'] * struct_res['platform_signal_score']
+                    weights_to_use['trajectory'] * struct_res['trajectory_score']
                 )
-                struct_res['total_score'] = recomputed_total
+                struct_res['total_score'] = recomputed_total / 0.8
                 
             struct_total = struct_res['total_score']
             
-            final_score = self.structured_weight * struct_total + self.semantic_weight * sem_score
+            # Base final score
+            base_final = self.structured_weight * struct_total + self.semantic_weight * sem_score
+            
+            # Behavioral signal blending (multiplier)
+            platform_signal = struct_res['platform_signal_score']
+            if ablation_feature == 'platform_signal_score':
+                platform_signal = 0.5
+                
+            final_score = base_final * (0.8 + 0.4 * platform_signal)
+            
+            # If honeypot, strictly zero
+            if struct_res.get('is_honeypot'):
+                final_score = 0.0
             
             rows.append({
                 'candidate_id': cid,
@@ -181,8 +193,8 @@ class HybridRanker:
 
         df['calibrated_score'] = df['final_score'].rank(pct=True).round(4)
         
-        # 8 & 9. Sort descending and add rank
-        df = df.sort_values(by='final_score', ascending=False).reset_index(drop=True)
+        # 8 & 9. Sort descending and add rank (deterministic tie-breaking)
+        df = df.sort_values(by=['final_score', 'candidate_id'], ascending=[False, True]).reset_index(drop=True)
         df['rank'] = df.index + 1
         
         # Reorder columns to put 'rank' first
@@ -201,84 +213,31 @@ class HybridRanker:
             
         return df
 
-    def llm_rerank(self,
-                   top_candidates: pd.DataFrame,
-                   jd_text: str,
-                   n: int = 15,
-                   skip_llm: bool = False) -> pd.DataFrame:
+    def generate_reasoning(self, df: pd.DataFrame, limit: int = 100) -> pd.DataFrame:
         """
-        Appends LLM-generated reasoning for candidate ranking.
-        
-        Args:
-            top_candidates (pd.DataFrame): DataFrame of ranked candidates.
-            jd_text (str): Job description text.
-            n (int, optional): Number of candidates to rerank.
-            skip_llm (bool, optional): If True, skips LLM calls and fills with empty strings.
-            
-        Returns:
-            pd.DataFrame: DataFrame with the added 'reasoning' column.
+        Generates deterministic, CPU-only reasoning strings for the top candidates.
         """
-        df = top_candidates.copy()
-        if skip_llm:
-            df['reasoning'] = ''
-            return df
-            
-        api_key = os.getenv('GROQ_API_KEY')
-        if not api_key:
-            logger.warning("GROQ_API_KEY not set. Skipping LLM rerank.")
-            df['reasoning'] = 'N/A'
-            return df
-            
-        try:
-            from groq import Groq
-            client = Groq(api_key=api_key)
-        except ImportError:
-            logger.warning("groq SDK not installed. Skipping LLM rerank.")
-            df['reasoning'] = 'N/A'
-            return df
-
-        system_prompt = (
-            "You are an expert technical recruiter evaluating candidates for "
-            "a Senior AI Engineer role. Be specific — reference actual skills, "
-            "years, company names, and titles from the candidate's profile. "
-            "Never give generic praise."
-        )
-
         reasonings = []
-        total = len(df)
         for idx, row in df.iterrows():
-            logger.info(f"Generating reasoning for candidate {len(reasonings)+1}/{total}...")
-            
-            candidate_id = row.get('candidate_id', 'Unknown')
-            current_title = row.get('current_title', 'Unknown')
-            years_of_experience = row.get('years_of_experience', 0)
-            skill_match_score = row.get('skill_match_score', 0.0)
-            experience_score = row.get('experience_score', 0.0)
-            trajectory_score = row.get('trajectory_score', 0.0)
-            platform_signal_score = row.get('platform_signal_score', 0.0)
-            profile_summary = str(row.get('profile_summary', ''))
-            
-            # Aggressively truncate to prevent Groq RateLimits (TPM > 30k) on free tier
-            user_prompt = f"Job Description:\n{jd_text[:800]}\n\nCandidate profile:\n- ID: {candidate_id}\n- Title: {current_title}\n- Experience: {years_of_experience} years\n- Score breakdown: skill={skill_match_score:.2f}, exp={experience_score:.2f}, trajectory={trajectory_score:.2f}, platform={platform_signal_score:.2f}\n- Profile summary: {profile_summary[:400]}\n\nWrite ONE sentence (max 25 words) explaining why this candidate ranks where they do. Start with their strongest relevant signal."
-
-            try:
-                response = client.chat.completions.create(
-                    model='llama-3.3-70b-versatile',
-                    messages=[
-                        {'role': 'system', 'content': system_prompt},
-                        {'role': 'user', 'content': user_prompt}
-                    ],
-                    max_tokens=80,
-                    temperature=0.3,
-                )
-                reasoning = response.choices[0].message.content
-                reasoning = reasoning.strip()[:200]
-            except Exception as e:
-                logger.error(f"API error for {candidate_id}: {e}")
-                reasoning = "API error"
+            if idx >= limit:
+                reasonings.append("")
+                continue
                 
-            reasonings.append(reasoning)
-            time.sleep(0.5)
+            yoe = float(row.get('years_of_experience', 0))
+            title = str(row.get('current_title', 'Professional')).title()
+            sem_score = float(row.get('semantic_score', 0.0))
+            struct_score = float(row.get('structured_total', 0.0))
+            
+            # Extract top matching skills from profile summary if possible
+            summary = str(row.get('profile_summary', ''))
+            skills_part = ""
+            if "Skills: " in summary:
+                skills_str = summary.split("Skills: ")[-1]
+                top_skills = [s.strip() for s in skills_str.split(',')[:3]]
+                skills_part = f" Key skills include {', '.join(top_skills)}."
+                
+            reasoning = f"Candidate offers {yoe:.1f} years of experience, currently working as {title}. Displays strong semantic relevance ({sem_score:.2f}) and structured alignment ({struct_score:.2f}).{skills_part}"
+            reasonings.append(reasoning[:200]) # Hard cap at 200 chars
             
         df['reasoning'] = reasonings
         return df
