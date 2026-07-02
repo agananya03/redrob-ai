@@ -8,6 +8,7 @@ import os
 import time
 import logging
 import pandas as pd
+import numpy as np
 
 logger = logging.getLogger(__name__)
 from src.data_loader import load_single_candidate
@@ -167,7 +168,6 @@ class HybridRanker:
             ce_scores = ce_model.predict(pairs)
             
             # Min-Max normalize ce_scores to [10.0, 20.0] to stay strictly above LightGBM scores
-            import numpy as np
             ce_min, ce_max = np.min(ce_scores), np.max(ce_scores)
             if ce_max > ce_min:
                 norm_ce = 10.0 + 10.0 * (ce_scores - ce_min) / (ce_max - ce_min)
@@ -195,6 +195,12 @@ class HybridRanker:
         
         # 3. Honeypot Zeroing
         df.loc[df['is_honeypot'] == True, 'final_score'] = 0.0
+
+        # Dynamically scale the final scores so the absolute best candidate is exactly 1.0
+        # This prevents flattening the top scores (clipping to 1.0 ruins rank order)
+        max_score = df['final_score'].max()
+        if max_score > 0.0:
+            df['final_score'] = df['final_score'] / max_score
 
         df['calibrated_score'] = df['final_score'].rank(pct=True).round(4)
         
@@ -241,7 +247,17 @@ class HybridRanker:
                 top_skills = [s.strip() for s in skills_str.split(',')[:3]]
                 skills_part = f" Key skills include {', '.join(top_skills)}."
                 
-            reasoning = f"Candidate offers {yoe:.1f} years of experience, currently working as {title}. Displays strong semantic relevance ({sem_score:.2f}) and structured alignment ({struct_score:.2f}).{skills_part}"
+            import hashlib
+            idx = int(hashlib.md5(str(row.get('candidate_id', '')).encode()).hexdigest(), 16) % 5
+            
+            templates = [
+                f"Candidate offers {yoe:.1f} years of experience, currently working as {title}. Displays strong semantic relevance ({sem_score:.2f}) and structured alignment ({struct_score:.2f}).{skills_part}",
+                f"Currently a {title} with {yoe:.1f} years of background. Their profile shows robust structured alignment ({struct_score:.2f}) and highly relevant semantic matching ({sem_score:.2f}).{skills_part}",
+                f"Bringing {yoe:.1f} years of expertise to this role, this {title} demonstrates exceptional semantic relevance ({sem_score:.2f}) alongside a structured score of {struct_score:.2f}.{skills_part}",
+                f"This {title} has {yoe:.1f} years of experience. They achieved {sem_score:.2f} on semantic matching and {struct_score:.2f} on structured metrics, indicating a solid fit.{skills_part}",
+                f"Showcasing high semantic relevance ({sem_score:.2f}), this {title} has {yoe:.1f} years of industry experience. Their structured alignment is calculated at {struct_score:.2f}.{skills_part}"
+            ]
+            reasoning = templates[idx]
             reasonings.append(reasoning[:200]) # Hard cap at 200 chars
             
         df['reasoning'] = reasonings

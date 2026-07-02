@@ -24,7 +24,7 @@ class EmbeddingScorer:
         """
         self.cache_dir = cache_dir
         os.makedirs(self.cache_dir, exist_ok=True)
-        self.cache_path = os.path.join(self.cache_dir, 'embedding_cache.pkl')
+        self.cache_path = 'data/processed/embeddings/embedding_cache.pkl'
         
         # Load existing cache
         if os.path.exists(self.cache_path):
@@ -59,13 +59,27 @@ class EmbeddingScorer:
         if text_hash in self._cache:
             return self._cache[text_hash]
             
-        emb = self.model.encode(text)
+        # Load model lazily
+        if self.model is None:
+            self.model = SentenceTransformer('BAAI/bge-small-en-v1.5')
+        
+        emb = self.model.encode(text, normalize_embeddings=True)
         self._cache[text_hash] = emb
         return emb
 
+    def save_cache(self):
+        """
+        Saves the current embedding cache dictionary to disk.
+        """
+        try:
+            with open(self.cache_path, 'wb') as f:
+                pickle.dump(self._cache, f)
+        except Exception as e:
+            logger.error(f"Failed to save embedding cache: {e}")
+
     def embed_jd(self, jd_text: str) -> np.ndarray:
         """
-        Embeds the job description and saves the cache to disk.
+        Embeds the job description text.
         
         Args:
             jd_text (str): Job description text.
@@ -78,62 +92,63 @@ class EmbeddingScorer:
         processed_jd_text = query_instruction + jd_text
         
         emb = self._get_embedding(processed_jd_text)
-        self.save_cache()
+        # Note: We don't cache JD since it changes, but we could in the future
         return emb
 
     def embed_candidates(self, profiles: list[dict],
                          batch_size: int = 64) -> dict[str, np.ndarray]:
         """
-        Embeds profile summaries for a list of candidate profiles in batches.
-        
-        Args:
-            profiles (list[dict]): Candidate profiles containing 'candidate_id' and 'profile_summary'.
-            batch_size (int): Size of batches to process.
-            
-        Returns:
-            dict[str, np.ndarray]: Dictionary mapping candidate_id to their embedding.
+        Embeds a list of candidate profiles.
         """
-        result = {}
-        if not profiles:
-            return result
+        if self.model is None:
+            self.model = SentenceTransformer('BAAI/bge-small-en-v1.5')
             
+        result = {}
         show_progress = len(profiles) > batch_size
         needs_save = False
         processed_since_save = 0
+        save_every = 5000
+        
+        cache_misses = 0
         
         for i in tqdm(range(0, len(profiles), batch_size), disable=not show_progress, desc="Embedding candidates"):
             batch_profiles = profiles[i:i+batch_size]
             to_encode_texts = []
+            to_encode_cids = []
             to_encode_hashes = []
             
             for p in batch_profiles:
+                cid = p.get('candidate_id')
                 summary = p.get('profile_summary', '')
+                if not isinstance(summary, str):
+                    summary = ""
                 text_hash = hashlib.md5(summary.encode('utf-8')).hexdigest()
                 
                 if text_hash not in self._cache:
+                    cache_misses += 1
                     to_encode_texts.append(summary)
+                    to_encode_cids.append(cid)
                     to_encode_hashes.append(text_hash)
+                else:
+                    result[cid] = self._cache[text_hash]
                     
             if to_encode_texts:
-                embs = self.model.encode(to_encode_texts, batch_size=batch_size)
-                for h, emb in zip(to_encode_hashes, embs):
-                    self._cache[h] = emb
+                embs = self.model.encode(to_encode_texts, batch_size=batch_size, normalize_embeddings=True)
+                for cid, hsh, emb in zip(to_encode_cids, to_encode_hashes, embs):
+                    self._cache[hsh] = emb
+                    result[cid] = emb
                 needs_save = True
                 processed_since_save += len(to_encode_texts)
                 
-                if processed_since_save >= 5000:
-                    self.save_cache()
-                    processed_since_save = 0
-                    needs_save = False
-                
-            for p in batch_profiles:
-                cid = p.get('candidate_id', 'UNKNOWN')
-                summary = p.get('profile_summary', '')
-                text_hash = hashlib.md5(summary.encode('utf-8')).hexdigest()
-                result[cid] = self._cache[text_hash]
-                
+            if needs_save and processed_since_save >= save_every:
+                self.save_cache()
+                processed_since_save = 0
+                needs_save = False
+
         if needs_save:
             self.save_cache()
+            
+        print(f"Embedding cache misses: {cache_misses} out of {len(profiles)}")
             
         return result
 

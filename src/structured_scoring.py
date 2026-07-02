@@ -25,7 +25,7 @@ DEFAULT_WEIGHTS = {
 class StructuredScorer:
     def __init__(self):
         self.esco_extractor = None
-        self.esco_failed = False
+        self.esco_failed = True  # Disabled to prevent O(N) bottleneck on 100k candidates
         self._jd_cache = {}
         # Precompile regular expressions for efficiency
         import re
@@ -190,10 +190,10 @@ class StructuredScorer:
         current_title = str(prof.get('current_title') or '').lower()
         
         # 1. Title Mismatch (e.g. Marketing Manager for AI role)
-        non_eng_titles = ['marketing', 'hr', 'human resources', 'sales', 'accountant', 'finance', 'recruiter']
+        non_eng_titles = ['marketing', 'hr', 'human resources', 'sales', 'accountant', 'finance', 'recruiter', 'design', 'graphic', 'art', 'writer', 'editor', 'content', 'ux', 'ui']
         for t in non_eng_titles:
-            if t in current_title and 'engineer' not in current_title and 'data' not in current_title:
-                multiplier *= 0.1
+            if t in current_title and 'engineer' not in current_title and 'data' not in current_title and 'ml' not in current_title and 'ai' not in current_title:
+                multiplier *= 0.05
                 break
                 
         career_history = candidate_dict.get('career_history', [])
@@ -371,12 +371,12 @@ class StructuredScorer:
             experience_score = 0.85
         elif years_val >= min_required:
             experience_score = 1.00
-        elif years_val >= min_required - 2:
-            experience_score = 0.70
-        elif years_val >= min_required - 4:
+        elif years_val >= min_required - 1:
             experience_score = 0.40
-        else:
+        elif years_val >= min_required - 2:
             experience_score = 0.15
+        else:
+            experience_score = 0.05
 
         # -------------------------------------------------------------
         # SUB-SCORE 3: education_score (0.0-1.0)

@@ -370,7 +370,7 @@ def page_ranker():
         with st.spinner("Analyzing profiles and computing scores..."):
             start_time = time.time()
             candidates = get_candidates(st.session_state.dataset_path)
-            st.session_state.raw_candidates = candidates
+            st.session_state.num_candidates = len(candidates)
             ranker = get_ranker()
             
             df = ranker.rank(candidates, jd_input, top_n=top_n)
@@ -394,7 +394,7 @@ def page_ranker():
         m1, m2, m3 = st.columns(3)
         m1.metric("Highest Match Score", f"{df['final_score'].max():.4f}")
         m2.metric("Avg Top-N Score", f"{df['final_score'].mean():.4f}")
-        m3.metric("Total Profiles Analyzed", f"{len(st.session_state.raw_candidates) if st.session_state.raw_candidates else len(df):,}")
+        m3.metric("Total Profiles Analyzed", f"{st.session_state.get('num_candidates', len(df)):,}")
         
         st.markdown("<br>### Top Recommendations", unsafe_allow_html=True)
         
